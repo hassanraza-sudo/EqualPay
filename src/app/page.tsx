@@ -7,8 +7,18 @@ import RoommatesSection from "@/components/RoommatesSection";
 import ExpenseFormModal from "@/components/ExpenseFormModal";
 import ExpenseHistory from "@/components/ExpenseHistory";
 import BalancesSection from "@/components/BalancesSection";
-import { AppData, Expense, Roommate } from "@/types";
-import { loadData, saveData, clearData, generateId } from "@/utils/storage";
+import { Expense, Roommate } from "@/types";
+import {
+  fetchRoommates,
+  fetchExpenses,
+  createRoommate,
+  updateRoommate,
+  deleteRoommate,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  clearAllData,
+} from "@/utils/storage";
 import {
   calculateBalances,
   calculateSettlements,
@@ -17,57 +27,66 @@ import {
 } from "@/utils/calculations";
 
 export default function Home() {
-  const [data, setData] = useState<AppData>({ roommates: [], expenses: [] });
+  const [roommates, setRoommates] = useState<Roommate[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
-  // Load from localStorage on mount
   useEffect(() => {
-    setData(loadData());
-    setIsLoaded(true);
+    async function loadDataFromSupabase() {
+      const [roommatesData, expensesData] = await Promise.all([
+        fetchRoommates(),
+        fetchExpenses(),
+      ]);
+      setRoommates(roommatesData);
+      setExpenses(expensesData);
+      setIsLoaded(true);
+    }
+
+    loadDataFromSupabase();
   }, []);
 
-  // Persist to localStorage whenever data changes
-  useEffect(() => {
-    if (isLoaded) {
-      saveData(data);
-    }
-  }, [data, isLoaded]);
-
   // --- Roommate handlers ---
-  const handleAddRoommate = (name: string) => {
-    const newRoommate: Roommate = { id: generateId(), name };
-    setData((prev) => ({ ...prev, roommates: [...prev.roommates, newRoommate] }));
+  const handleAddRoommate = async (name: string) => {
+    const roommate = await createRoommate(name);
+    if (roommate) {
+      setRoommates((prev) => [...prev, roommate]);
+    }
   };
 
-  const handleEditRoommate = (id: string, name: string) => {
-    setData((prev) => ({
-      ...prev,
-      roommates: prev.roommates.map((r) => (r.id === id ? { ...r, name } : r)),
-    }));
+  const handleEditRoommate = async (id: string, name: string) => {
+    const success = await updateRoommate(id, name);
+    if (success) {
+      setRoommates((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, name } : r))
+      );
+    }
   };
 
-  const handleDeleteRoommate = (id: string) => {
-    setData((prev) => ({
-      ...prev,
-      roommates: prev.roommates.filter((r) => r.id !== id),
-      expenses: prev.expenses.filter((e) => e.paidBy !== id),
-    }));
+  const handleDeleteRoommate = async (id: string) => {
+    const success = await deleteRoommate(id);
+    if (success) {
+      setRoommates((prev) => prev.filter((r) => r.id !== id));
+      setExpenses((prev) => prev.filter((e) => e.paidBy !== id));
+    }
   };
 
   // --- Expense handlers ---
-  const handleSaveExpense = (expense: Omit<Expense, "id">, id?: string) => {
+  const handleSaveExpense = async (expense: Omit<Expense, "id">, id?: string) => {
     if (id) {
-      setData((prev) => ({
-        ...prev,
-        expenses: prev.expenses.map((e) =>
-          e.id === id ? { ...expense, id } : e
-        ),
-      }));
+      const updated = await updateExpense(id, expense);
+      if (updated) {
+        setExpenses((prev) =>
+          prev.map((e) => (e.id === id ? updated : e))
+        );
+        setEditingExpense(null);
+      }
     } else {
-      const newExpense: Expense = { ...expense, id: generateId() };
-      setData((prev) => ({ ...prev, expenses: [...prev.expenses, newExpense] }));
+      const created = await createExpense(expense);
+      if (created) {
+        setExpenses((prev) => [created, ...prev]);
+      }
     }
   };
 
@@ -76,16 +95,19 @@ export default function Home() {
     setIsExpenseModalOpen(true);
   };
 
-  const handleDeleteExpense = (id: string) => {
-    setData((prev) => ({
-      ...prev,
-      expenses: prev.expenses.filter((e) => e.id !== id),
-    }));
+  const handleDeleteExpense = async (id: string) => {
+    const success = await deleteExpense(id);
+    if (success) {
+      setExpenses((prev) => prev.filter((e) => e.id !== id));
+    }
   };
 
-  const handleClearAll = () => {
-    setData({ roommates: [], expenses: [] });
-    clearData();
+  const handleClearAll = async () => {
+    const success = await clearAllData();
+    if (success) {
+      setRoommates([]);
+      setExpenses([]);
+    }
   };
 
   const openAddExpenseModal = () => {
@@ -94,11 +116,10 @@ export default function Home() {
   };
 
   // --- Calculations ---
-  const totalExpenses = getTotalExpenses(data.expenses);
-  const balances = calculateBalances(data.roommates, data.expenses);
+  const totalExpenses = getTotalExpenses(expenses);
+  const balances = calculateBalances(roommates, expenses);
   const settlements = calculateSettlements(balances);
-  const perPersonShare =
-    data.roommates.length > 0 ? totalExpenses / data.roommates.length : 0;
+  const perPersonShare = roommates.length > 0 ? totalExpenses / roommates.length : 0;
 
   if (!isLoaded) {
     return (
@@ -126,7 +147,7 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <button
+              <button
             onClick={openAddExpenseModal}
             className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors shadow-sm"
           >
@@ -150,14 +171,14 @@ export default function Home() {
             />
             <StatCard
               label="Total Members"
-              value={String(data.roommates.length)}
+              value={String(roommates.length)}
               icon={<Users size={20} />}
               iconBg="bg-violet-50"
               iconColor="text-violet-600"
             />
             <StatCard
               label="Total Records"
-              value={String(data.expenses.length)}
+              value={String(expenses.length)}
               icon={<Receipt size={20} />}
               iconBg="bg-amber-50"
               iconColor="text-amber-600"
@@ -175,7 +196,7 @@ export default function Home() {
         {/* Roommates & Balances */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           <RoommatesSection
-            roommates={data.roommates}
+            roommates={roommates}
             onAdd={handleAddRoommate}
             onEdit={handleEditRoommate}
             onDelete={handleDeleteRoommate}
@@ -183,15 +204,15 @@ export default function Home() {
           <BalancesSection
             balances={balances}
             settlements={settlements}
-            hasRoommates={data.roommates.length > 0}
+            hasRoommates={roommates.length > 0}
           />
         </section>
 
         {/* Expense History */}
         <section>
           <ExpenseHistory
-            expenses={data.expenses}
-            roommates={data.roommates}
+            expenses={expenses}
+            roommates={roommates}
             onEdit={handleEditExpense}
             onDelete={handleDeleteExpense}
             onClearAll={handleClearAll}
@@ -200,7 +221,7 @@ export default function Home() {
       </main>
 
       <footer className="text-center text-xs text-slate-400 py-6">
-        EqualPay · Data is stored locally in your browser
+        EqualPay · Data is now stored in Supabase and shared across users
       </footer>
 
       <ExpenseFormModal
@@ -210,7 +231,7 @@ export default function Home() {
           setEditingExpense(null);
         }}
         onSave={handleSaveExpense}
-        roommates={data.roommates}
+        roommates={roommates}
         editingExpense={editingExpense}
       />
     </div>

@@ -26,6 +26,7 @@ export interface Expense {
   amount: number;
   paidBy: string; // roommate id
   participants: string[]; // roommate ids who shared this expense
+  notes?: string;
   date: string; // ISO date string (yyyy-mm-dd)
   category: Category;
 }
