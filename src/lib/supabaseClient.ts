@@ -6,16 +6,22 @@ import type { Expense, Roommate } from "@/types";
 
 export type Database = {
   public: {
-    roommates: {
-      Row: Roommate;
-      Insert: { name: string };
-      Update: { name?: string };
+    Tables: {
+      roommates: {
+        Row: Roommate;
+        Insert: { name: string };
+        Update: { name?: string };
+        Relationships: [];
+      };
+      expenses: {
+        Row: Expense;
+        Insert: Omit<Expense, "id">;
+        Update: Partial<Omit<Expense, "id">>;
+        Relationships: [];
+      };
     };
-    expenses: {
-      Row: Expense;
-      Insert: Omit<Expense, "id">;
-      Update: Partial<Omit<Expense, "id">>;
-    };
+    Views: {};
+    Functions: {};
   };
 };
 
@@ -30,12 +36,20 @@ export function getSupabaseClient() {
     return null;
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  const isPlaceholderValue = (value: string) =>
+    /(your[-_ ]project|your[-_ ]anon[-_ ]key|<your[-_ ]project>|<your[-_ ]anon[-_ ]key>)/i.test(value);
+
+  if (
+    !supabaseUrl ||
+    !supabaseAnonKey ||
+    isPlaceholderValue(supabaseUrl) ||
+    isPlaceholderValue(supabaseAnonKey)
+  ) {
     console.error(
-      "Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      "Missing or invalid Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your real Supabase project values."
     );
     return null;
   }

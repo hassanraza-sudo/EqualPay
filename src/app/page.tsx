@@ -19,6 +19,7 @@ import {
   deleteExpense,
   clearAllData,
 } from "@/utils/storage";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
   calculateBalances,
   calculateSettlements,
@@ -32,48 +33,128 @@ export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const getSupabaseLoadError = (error: unknown) => {
+    if (!(error instanceof Error)) {
+      return "Failed to load shared data from Supabase.";
+    }
+
+    if (error.message.includes("Failed to fetch")) {
+      return "Unable to reach Supabase. Check your NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and network connectivity.";
+    }
+
+    if (error.message.includes("Could not find the table")) {
+      return "Supabase schema is missing. Create the expected tables from supabase-schema.sql or update your Supabase project schema.";
+    }
+
+    if (
+      error.message.includes("Invalid login credentials") ||
+      error.message.includes("permission denied") ||
+      error.message.includes("JWT") ||
+      error.message.includes("Forbidden")
+    ) {
+      return "Supabase authentication failed. Check your NEXT_PUBLIC_SUPABASE_ANON_KEY and project permissions.";
+    }
+
+    return error.message;
+  };
 
   useEffect(() => {
-    async function loadDataFromSupabase() {
-      const [roommatesData, expensesData] = await Promise.all([
-        fetchRoommates(),
-        fetchExpenses(),
-      ]);
-      setRoommates(roommatesData);
-      setExpenses(expensesData);
+    const supabase = getSupabaseClient();
+
+    if (!supabase) {
+      setLoadError(
+        "Supabase is not configured. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+      );
       setIsLoaded(true);
+      return;
+    }
+
+    async function loadDataFromSupabase() {
+      try {
+        const [roommatesData, expensesData] = await Promise.all([
+          fetchRoommates(),
+          fetchExpenses(),
+        ]);
+        setRoommates(roommatesData);
+        setExpenses(expensesData);
+      } catch (error) {
+        console.error(error);
+        setLoadError(getSupabaseLoadError(error));
+      } finally {
+        setIsLoaded(true);
+      }
     }
 
     loadDataFromSupabase();
+
+    const channel = supabase
+      .channel("public:shared-data")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "roommates" },
+        () => {
+          loadDataFromSupabase();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "expenses" },
+        () => {
+          loadDataFromSupabase();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // --- Roommate handlers ---
   const handleAddRoommate = async (name: string) => {
-    const roommate = await createRoommate(name);
-    if (roommate) {
+    setActionError(null);
+    try {
+      const roommate = await createRoommate(name);
       setRoommates((prev) => [...prev, roommate]);
+    } catch (error) {
+      console.error(error);
+      setActionError(
+        error instanceof Error
+          ? `Unable to add roommate: ${error.message}`
+          : "Unable to add roommate. Check Supabase connection and keys."
+      );
     }
   };
 
   const handleEditRoommate = async (id: string, name: string) => {
+    setActionError(null);
     const success = await updateRoommate(id, name);
     if (success) {
       setRoommates((prev) =>
         prev.map((r) => (r.id === id ? { ...r, name } : r))
       );
+      return;
     }
+    setActionError("Unable to update roommate. Check your Supabase connection.");
   };
 
   const handleDeleteRoommate = async (id: string) => {
+    setActionError(null);
     const success = await deleteRoommate(id);
     if (success) {
       setRoommates((prev) => prev.filter((r) => r.id !== id));
       setExpenses((prev) => prev.filter((e) => e.paidBy !== id));
+      return;
     }
+    setActionError("Unable to remove roommate. Check your Supabase connection.");
   };
 
   // --- Expense handlers ---
   const handleSaveExpense = async (expense: Omit<Expense, "id">, id?: string) => {
+    setActionError(null);
     if (id) {
       const updated = await updateExpense(id, expense);
       if (updated) {
@@ -81,12 +162,16 @@ export default function Home() {
           prev.map((e) => (e.id === id ? updated : e))
         );
         setEditingExpense(null);
+        return;
       }
+      setActionError("Unable to update expense. Check your Supabase connection and keys.");
     } else {
       const created = await createExpense(expense);
       if (created) {
         setExpenses((prev) => [created, ...prev]);
+        return;
       }
+      setActionError("Unable to create expense. Check your Supabase connection and keys.");
     }
   };
 
@@ -96,18 +181,24 @@ export default function Home() {
   };
 
   const handleDeleteExpense = async (id: string) => {
+    setActionError(null);
     const success = await deleteExpense(id);
     if (success) {
       setExpenses((prev) => prev.filter((e) => e.id !== id));
+      return;
     }
+    setActionError("Unable to delete expense. Check your Supabase connection.");
   };
 
   const handleClearAll = async () => {
+    setActionError(null);
     const success = await clearAllData();
     if (success) {
       setRoommates([]);
       setExpenses([]);
+      return;
     }
+    setActionError("Unable to clear data. Check your Supabase connection.");
   };
 
   const openAddExpenseModal = () => {
@@ -125,6 +216,29 @@ export default function Home() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <p className="text-sm text-slate-400">Loading EqualPay...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    const title = loadError.includes("Supabase schema")
+      ? "Supabase Schema Missing"
+      : loadError.includes("authentication") || loadError.includes("auth")
+      ? "Supabase Authentication Failed"
+      : loadError.includes("Unable to reach Supabase")
+      ? "Supabase Connection Failed"
+      : "Supabase Not Configured";
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+        <div className="max-w-lg rounded-3xl border border-red-200 bg-white p-8 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900 mb-3">{title}</h1>
+          <p className="text-sm text-slate-600 mb-4">{loadError}</p>
+          <p className="text-sm text-slate-500">
+            Add the required environment variables to <span className="font-medium">.env.local</span> or in Vercel
+            and refresh the page.
+          </p>
+        </div>
       </div>
     );
   }
@@ -192,6 +306,11 @@ export default function Home() {
             />
           </div>
         </section>
+        {actionError && (
+          <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            {actionError}
+          </div>
+        )}
 
         {/* Roommates & Balances */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">

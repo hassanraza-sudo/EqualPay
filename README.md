@@ -1,6 +1,6 @@
 # EqualPay — Roommate Expense Sharing App
 
-A clean, minimal, production-ready web app for managing and splitting shared household expenses equally among roommates. No login, no backend — all data lives in your browser's localStorage.
+A clean, minimal, production-ready web app for managing and splitting shared household expenses equally among roommates. No login required for now — the app uses Supabase to store and share roommate and expense data across users and devices.
 
 ---
 
@@ -13,7 +13,7 @@ A clean, minimal, production-ready web app for managing and splitting shared hou
 - **Expense History** — Filter by category or roommate, clear all data with confirmation
 - **Pakistani Rupee (Rs.)** currency format
 - **Mobile-first** responsive design
-- **localStorage** persistence — data survives page refreshes
+- **Supabase persistence** — data is stored in a shared database and visible to everyone opening the same app URL
 
 ---
 
@@ -39,10 +39,23 @@ A clean, minimal, production-ready web app for managing and splitting shared hou
 ```bash
 # 1. Install dependencies
 npm install
+```
 
-# 2. Start the development server
+Create a `.env.local` file at the project root using `.env.local.example` as a template.
+
+```bash
+cp .env.local.example .env.local
+```
+
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase project.
+
+> After changing `.env.local`, restart your dev server: `npm run dev`.
+
+```bash
 npm run dev
 ```
+
+If the app still shows an error, make sure the Supabase tables are created in your project using `supabase-schema.sql`.
 
 Then open [http://localhost:3000](http://localhost:3000) in your browser.
 
@@ -53,7 +66,27 @@ npm run build
 npm start
 ```
 
+### Vercel Deployment
+
+Add the following environment variables to your Vercel project dashboard:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+This ensures data persists after deployment and is shared across all users of the same link.
+
 ---
+
+## Supabase Backend
+
+The app uses two Supabase tables:
+
+- `roommates` — stores roommate names
+- `expenses` — stores expense title, amount, paidBy, participants, notes, date, and category
+
+Use the schema file in `supabase-schema.sql` to create these tables and the required anon-key policies in your Supabase project.
+
+If you already created the tables and are still blocked, re-run `supabase-schema.sql` in the SQL editor to add the missing row-level security policies.
 
 ## Project Structure
 

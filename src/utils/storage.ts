@@ -1,7 +1,9 @@
 import { Expense, Roommate } from "@/types";
+import type { Database } from "@/lib/supabaseClient";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import { SupabaseClient } from "@supabase/supabase-js";
 
-function getSupabase(): any {
+function getSupabase(): SupabaseClient<Database> | null {
   const supabase = getSupabaseClient();
 
   if (!supabase) {
@@ -13,9 +15,32 @@ function getSupabase(): any {
   return supabase;
 }
 
+function normalizeExpenseRow(row: any): Expense {
+  return {
+    id: row.id,
+    title: row.title,
+    amount: typeof row.amount === "string" ? Number(row.amount) : row.amount,
+    paidBy: row.paidBy ?? row.paidby ?? row.paid_by ?? "",
+    participants: row.participants ?? [],
+    notes: row.notes ?? undefined,
+    date: row.date,
+    category: row.category,
+  };
+}
+
+function mapExpenseToDb(expense: Omit<Expense, "id">) {
+  const { paidBy, ...rest } = expense;
+  return {
+    ...rest,
+    paidby: paidBy,
+  };
+}
+
 export async function fetchRoommates(): Promise<Roommate[]> {
   const supabase = getSupabase();
-  if (!supabase) return [];
+  if (!supabase) {
+    throw new Error("Supabase client unavailable.");
+  }
 
   const { data, error } = await supabase
     .from("roommates")
@@ -23,8 +48,7 @@ export async function fetchRoommates(): Promise<Roommate[]> {
     .order("name", { ascending: true });
 
   if (error) {
-    console.error("Failed to fetch roommates:", error);
-    return [];
+    throw new Error(error.message || "Failed to fetch roommates.");
   }
 
   return data || [];
@@ -32,19 +56,20 @@ export async function fetchRoommates(): Promise<Roommate[]> {
 
 export async function fetchExpenses(): Promise<Expense[]> {
   const supabase = getSupabase();
-  if (!supabase) return [];
+  if (!supabase) {
+    throw new Error("Supabase client unavailable.");
+  }
 
   const { data, error } = await supabase
     .from("expenses")
-    .select("id,title,amount,paidBy,participants,notes,date,category")
+    .select("*")
     .order("date", { ascending: false });
 
   if (error) {
-    console.error("Failed to fetch expenses:", error);
-    return [];
+    throw new Error(error.message || "Failed to fetch expenses.");
   }
 
-  return data || [];
+  return (data || []).map(normalizeExpenseRow);
 }
 
 function generateId() {
@@ -54,24 +79,20 @@ function generateId() {
   return `local-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export async function createRoommate(name: string): Promise<Roommate | null> {
+export async function createRoommate(name: string): Promise<Roommate> {
   const supabase = getSupabase();
   if (!supabase) {
-    console.warn(
-      "Supabase unavailable — creating roommate locally so the UI remains responsive."
-    );
-    return { id: generateId(), name };
+    throw new Error("Supabase client unavailable.");
   }
 
-  const { data, error } = await supabase
-    .from("roommates")
-    .insert({ name })
+  const { data, error } = await (supabase.from("roommates") as any)
+    .insert({ name } as any)
     .select("id,name")
     .single();
 
   if (error) {
     console.error("Failed to create roommate:", error);
-    return null;
+    throw new Error(error.message || "Failed to create roommate.");
   }
 
   return data;
@@ -81,9 +102,8 @@ export async function updateRoommate(id: string, name: string): Promise<boolean>
   const supabase = getSupabase();
   if (!supabase) return false;
 
-  const { error } = await supabase
-    .from("roommates")
-    .update({ name })
+  const { error } = await (supabase.from("roommates") as any)
+    .update({ name } as any)
     .eq("id", id);
 
   if (error) {
@@ -98,8 +118,7 @@ export async function deleteRoommate(id: string): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
 
-  const { error } = await supabase
-    .from("roommates")
+  const { error } = await (supabase.from("roommates") as any)
     .delete()
     .eq("id", id);
 
@@ -116,16 +135,13 @@ export async function createExpense(
 ): Promise<Expense | null> {
   const supabase = getSupabase();
   if (!supabase) {
-    console.warn(
-      "Supabase unavailable — creating expense locally so the UI remains responsive."
-    );
-    return { id: generateId(), ...expense };
+    return null;
   }
 
-  const { data, error } = await supabase
-    .from("expenses")
-    .insert(expense)
-    .select("id,title,amount,paidBy,participants,notes,date,category")
+  const dbExpense = mapExpenseToDb(expense);
+  const { data, error } = await (supabase.from("expenses") as any)
+    .insert(dbExpense as any)
+    .select("*")
     .single();
 
   if (error) {
@@ -142,17 +158,14 @@ export async function updateExpense(
 ): Promise<Expense | null> {
   const supabase = getSupabase();
   if (!supabase) {
-    console.warn(
-      "Supabase unavailable — updating expense locally so the UI remains responsive."
-    );
-    return { id, ...expense };
+    return null;
   }
 
-  const { data, error } = await supabase
-    .from("expenses")
-    .update(expense)
+  const dbExpense = mapExpenseToDb(expense);
+  const { data, error } = await (supabase.from("expenses") as any)
+    .update(dbExpense as any)
     .eq("id", id)
-    .select("id,title,amount,paidBy,participants,notes,date,category")
+    .select("*")
     .single();
 
   if (error) {
@@ -167,7 +180,7 @@ export async function deleteExpense(id: string): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
 
-  const { error } = await supabase.from("expenses").delete().eq("id", id);
+  const { error } = await (supabase.from("expenses") as any).delete().eq("id", id);
 
   if (error) {
     console.error("Failed to delete expense:", error);
@@ -181,13 +194,13 @@ export async function clearAllData(): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
 
-  const { error: deleteExpensesError } = await supabase.from("expenses").delete();
+  const { error: deleteExpensesError } = await (supabase.from("expenses") as any).delete();
   if (deleteExpensesError) {
     console.error("Failed to clear expenses:", deleteExpensesError);
     return false;
   }
 
-  const { error: deleteRoommatesError } = await supabase.from("roommates").delete();
+  const { error: deleteRoommatesError } = await (supabase.from("roommates") as any).delete();
   if (deleteRoommatesError) {
     console.error("Failed to clear roommates:", deleteRoommatesError);
     return false;
